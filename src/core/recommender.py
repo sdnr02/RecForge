@@ -4,6 +4,7 @@ from typing import List, Dict
 from core.user import User
 from core.item import Item
 from data_structures.heap import MinHeap
+from algorithms.content_based import ContentBasedRecommender
 
 class RecommendationEngine:
     """Class that orchestrates all users and item management"""
@@ -11,19 +12,19 @@ class RecommendationEngine:
     def __init__(self):
         """Initializing the engine object"""
         # Hash maps to store users, items and ratings
-        self.user_store: Dict = {}
-        self.item_store: Dict = {}
-        self.user_rating_store: Dict[Dict] = {}
-        self.item_rating_store: Dict[Dict] = {}
+        self.user_store: Dict[str,User] = {}
+        self.item_store: Dict[str,Item] = {}
+        self.user_rating_store: Dict[str, Dict[str,float]] = {}
+        self.item_rating_store: Dict[str, Dict[str,float]] = {}
 
         # Matrix that maps users to their ratings
-        self.user_item_matrix: List[List] = []
+        self.user_item_matrix: List[List[float]] = []
         
         # Bidirectional mapping of users/items to index in the matrix and vice versa
-        self.user_to_index: Dict = {}
-        self.index_to_user: List = []
-        self.item_to_index: Dict = {}
-        self.index_to_item: List = []
+        self.user_to_index: Dict[str,int] = {}
+        self.index_to_user: List[str] = []
+        self.item_to_index: Dict[str,int] = {}
+        self.index_to_item: List[str] = []
 
     def add_user(self, user_object: User) -> None:
         """Adding the user object to the appropriate stores"""
