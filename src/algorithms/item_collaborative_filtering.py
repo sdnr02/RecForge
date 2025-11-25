@@ -5,7 +5,7 @@ if TYPE_CHECKING:
 
 from utils.sorting import bubble_sort_list_with_tuples, bubble_sort_map_by_values
 
-class CollaborativeFilterer:
+class ItemCollaborativeFilterer:
     """Class that implements collaborative filtering strategy for recommendation"""
 
     def __init__(self, engine: RecommendationEngine) -> None:
