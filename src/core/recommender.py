@@ -5,6 +5,8 @@ from core.user import User
 from core.item import Item
 from data_structures.heap import MinHeap
 from algorithms.content_based import ContentBasedRecommender
+from algorithms.item_collaborative_filtering import ItemCollaborativeFilterer
+from algorithms.user_collaborative_filtering import UserCollaborativeFiltering
 
 class RecommendationEngine:
     """Class that orchestrates all users and item management"""
@@ -25,6 +27,11 @@ class RecommendationEngine:
         self.index_to_user: List[str] = []
         self.item_to_index: Dict[str,int] = {}
         self.index_to_item: List[str] = []
+
+        # Initializing recommendation algorithms
+        self.content_based_filtering = ContentBasedRecommender(self)
+        self.item_based_collaborative_filtering = ItemCollaborativeFilterer(self)
+        self.user_based_collaborative_filtering = UserCollaborativeFiltering(self)
 
     def add_user(self, user_object: User) -> None:
         """Adding the user object to the appropriate stores"""
@@ -378,3 +385,200 @@ class RecommendationEngine:
 
         # Returning top k similar items
         return result
+    
+    def explain_recommendations(
+        self,
+        user_id: str,
+        item_id: str
+    ) -> List[str]:
+        """Method to generate explanations for the recommendations to improve observability"""
+        # Initializing an empty list to store the explanation
+        explanations = []
+
+        # Explanations from the content-based preferences
+        user_preferences = self.content_based_filtering.extract_user_preferences(user_id)
+        item = self.get_item(item_id)
+
+        # Checking if user preferences exist
+        if user_preferences:
+            # Checking if the item category is in the user preferences
+            if item.category in user_preferences:
+                # Getting the weight for that category
+                weight = user_preferences[item.category]
+                # Creating the explanation string
+                explanation = f"You rated {item.category} items highly (preference: {weight:.0%})"
+                # Adding to the explanations list
+                explanations.append(explanation)
+
+            # Checking if the item tags exist
+            if item.tags:
+                # Iterating through the tags
+                for tag in item.tags:
+                    # Checking if the tag is in user preferences
+                    if tag in user_preferences:
+                        # Getting the weight for that tag
+                        weight = user_preferences[tag]
+                        # Creating the explanation string
+                        explanation = f"Matches your interest in {tag} (preference: {weight:.0%})"
+                        # Adding to the explanations list
+                        explanations.append(explanation)
+
+        # Explanations from item-based collaborative filtering
+        user_ratings = self.user_rating_store.get(user_id, {})
+
+        # Iterating through the user's ratings
+        for rated_item, rating in user_ratings.items():
+            # Checking if the user rated it highly
+            if rating >= 4.0:
+                # Calculating similarity between the rated item and the recommended item
+                similarity = self.get_item_similarity(rated_item, item_id)
+
+                # Checking if the similarity is high
+                if similarity >= 0.7:
+                    # Creating the explanation string
+                    explanation = f"Similar to '{rated_item}' which you rated {rating}★ (similarity: {similarity:.0%})"
+                    # Adding to the explanations list
+                    explanations.append(explanation)
+
+        # Explanations from user-based collaborative filtering
+        similar_users = self.user_based_collaborative_filtering.find_similar_users(user_id, k=10)
+
+        # Initializing counter for high ratings
+        high_rating_count = 0
+
+        # Iterating through similar users
+        for similar_user_id in similar_users:
+            # Getting the rating from the similar user
+            rating = self.get_rating(similar_user_id, item_id)
+
+            # Checking if the rating exists and is high
+            if rating and rating >= 4.0:
+                # Incrementing the counter
+                high_rating_count = high_rating_count + 1
+
+        # Checking if any similar users rated it highly
+        if high_rating_count > 0:
+            # Creating the explanation string
+            explanation = f"{high_rating_count} users with similar taste to yours rated this highly"
+            # Adding to the explanations list
+            explanations.append(explanation)
+
+        # Returning the list of explanations
+        return explanations
+    
+    def batch_recommend(
+        self,
+        user_ids: List[str],
+        n: int = 10
+    ) -> Dict[str, List[str]]:
+        """Method to generate recommendations for multiple users at once"""
+        # Checking if user neighborhoods are built
+        if not self.user_based_collaborative_filtering.user_neighbourhoods:
+            # Building the user neighborhoods for faster lookups
+            self.user_based_collaborative_filtering.build_user_neighbourhoods(k=10)
+
+        # Checking if cooccurrence matrix is built
+        if not self.item_based_collaborative_filtering.cooccurence_matrix:
+            # Building the cooccurrence matrix for faster lookups
+            self.item_based_collaborative_filtering.build_cooccurence_matrix()
+
+        # Checking if category index is built
+        if not self.content_based_filtering.category_index:
+            # Building the category index for faster lookups
+            self.content_based_filtering.build_category_index()
+
+        # Checking if tag index is built
+        if not self.content_based_filtering.tag_index:
+            # Building the tag index for faster lookups
+            self.content_based_filtering.build_tag_index()
+
+        # Initializing the results dictionary
+        results = {}
+
+        # Iterating through all user IDs
+        for user_id in user_ids:
+            # Getting hybrid recommendations for that user
+            from algorithms.hybrid import HybridRecommender
+            
+            # Initializing the hybrid recommender
+            hybrid_recommender = HybridRecommender(
+                content_based_filterer=self.content_based_filtering,
+                item_based_collaborative_filterer=self.item_based_collaborative_filtering,
+                user_based_collaborative_filterer=self.user_based_collaborative_filtering
+            )
+            
+            # Getting the recommendations
+            recommendations = hybrid_recommender.get_hybrid_recommendations(user_id, n)
+            
+            # Adding to the results dictionary
+            results[user_id] = recommendations
+
+        # Returning the results dictionary
+        return results
+    
+    def recommend_with_filters(
+        self,
+        user_id: str,
+        n: int = 10,
+        exclude_categories: List[str] = None,
+        min_rating: float = None
+    ) -> List[str]:
+        """Method to generate recommendations with user-specified filters"""
+        # Getting more candidates than needed since many will be filtered
+        from algorithms.hybrid import HybridRecommender
+        
+        # Initializing the hybrid recommender
+        hybrid_recommender = HybridRecommender(
+            content_based_filterer=self.content_based_filtering,
+            item_based_collaborative_filterer=self.item_based_collaborative_filtering,
+            user_based_collaborative_filterer=self.user_based_collaborative_filtering
+        )
+        
+        # Getting three times as many candidates
+        candidates = hybrid_recommender.get_hybrid_recommendations(user_id, n=3*n)
+
+        # Initializing the filtered list
+        filtered = []
+
+        # Iterating through the candidates
+        for item_id in candidates:
+            # Getting the item object
+            item = self.get_item(item_id)
+
+            # Checking if item exists
+            if not item:
+                # Skip to next item
+                continue
+
+            # Filter 1: Checking exclude categories
+            if exclude_categories:
+                # Checking if item category is in the excluded list
+                if item.category in exclude_categories:
+                    # Skip this item
+                    continue
+
+            # Filter 2: Checking minimum rating
+            if min_rating:
+                # Getting the average rating for the item
+                avg_rating = self.get_average_rating_for_item(item_id)
+                # Checking if it meets the minimum
+                if avg_rating < min_rating:
+                    # Skip this item
+                    continue
+
+            # Filter 3: Checking if user already rated it
+            user_rating = self.get_rating(user_id, item_id)
+            if user_rating:
+                # Skip this item
+                continue
+
+            # Item passed all filters so add it to the list
+            filtered.append(item_id)
+
+            # Checking if we have enough items
+            if len(filtered) >= n:
+                # Stop searching
+                break
+
+        # Returning the filtered list with top N items
+        return filtered[:n]
